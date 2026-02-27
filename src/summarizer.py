@@ -10,13 +10,10 @@ import anthropic
 
 client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
-SYSTEM_PROMPT = """You are a personal chief of staff. Every Friday morning, you write a 
-crisp, insightful weekly briefing for your principal based on their actual activity data.
-
-Your tone is warm but professional — like a trusted colleague who knows you well. 
-You surface what matters, not just what happened. You write in clear prose (not just bullet dumps).
-You are honest about gaps and missed follow-ups without being harsh.
-
+SYSTEM_PROMPT = """You are a personal chief of staff writing a weekly briefing. 
+Be matter-of-fact and concise. No fluff, no cheerleading, no filler phrases like 
+"it's been a busy week" or "great progress". Just clear, useful observations.
+State facts and insights directly. If something needs attention, say so plainly.
 You always respond with valid JSON in the exact schema provided."""
 
 
@@ -40,6 +37,10 @@ def generate_briefing(
     upcoming_events = upcoming_events[:10]
     meeting_notes = meeting_notes[:10]
 
+    # Count stats for the at-a-glance section
+    meeting_count = len(past_events)
+    email_count = len(emails)
+
     data_payload = {
         "emails": emails,
         "past_calendar_events": past_events,
@@ -47,27 +48,30 @@ def generate_briefing(
         "google_docs": docs,
         "granola_meeting_notes": meeting_notes,
         "last_weeks_summary": last_week_summary,
+        "meeting_count": meeting_count,
+        "email_count": email_count,
     }
 
     user_prompt = f"""Here is {user_name}'s activity data for the past 7 days.
 
 {json.dumps(data_payload, indent=2, default=str)}
 
-Based on this, generate a weekly briefing. Respond ONLY with JSON in this exact schema:
+Generate a weekly briefing. Tone: direct, matter-of-fact, no filler. 
+Respond ONLY with JSON in this exact schema:
 
 {{
-  "week_headline": "A single punchy sentence capturing the character of this week",
-  "key_themes": ["theme 1", "theme 2", "theme 3"],
-  "people_spoke_to": [
-    {{
-      "name": "Full name or email",
-      "context": "What you discussed / relationship",
-      "follow_up_needed": true
-    }}
-  ],
+  "at_a_glance": {{
+    "meetings": {meeting_count},
+    "emails": {email_count},
+    "most_contacted": "Name or company you interacted with most",
+    "momentum": "One sentence on where energy/progress seems to be building",
+    "watch_out": "One thing that might have slipped or needs attention"
+  }},
+
   "key_learnings": [
-    "Learning or insight 1 (written as a full sentence)"
+    "A concrete insight or thing learned this week (one sentence, specific)"
   ],
+
   "missed_follow_ups": [
     {{
       "person": "Name or email",
@@ -75,39 +79,55 @@ Based on this, generate a weekly briefing. Respond ONLY with JSON in this exact 
       "suggested_action": "Concrete next step"
     }}
   ],
+
+  "people_spoke_to": [
+    {{
+      "name": "Name (Company)",
+      "context": "One short sentence on what was discussed",
+      "follow_up_needed": true
+    }}
+  ],
+
   "follow_up_drafts": [
     {{
       "to_email": "email@example.com",
-      "to_name": "Person's name",
-      "subject": "Email subject line",
-      "body": "Full email body text."
+      "to_name": "Name",
+      "subject": "Subject line",
+      "body": "Email body."
     }}
   ],
+
   "docs_created_or_edited": [
     {{
       "title": "Doc title",
       "url": "URL if available",
-      "significance": "Why this matters"
+      "significance": "One sentence on what it was for"
     }}
   ],
+
   "open_loops_from_last_week": [
-    "Was last week's item X addressed?"
+    "Status update on something flagged last week"
   ],
+
   "week_ahead_preview": [
     {{
       "title": "Event title",
       "date": "Day and time",
-      "prep_note": "One-line note on what to prepare"
+      "prep_note": "What to prepare or think about"
     }}
   ],
-  "closing_thought": "A single thoughtful observation to carry into next week"
+
+  "closing_thought": "One plain, honest observation to carry into next week"
 }}
 
 Rules:
-- Only include sections where there is real data
-- follow_up_drafts: max 3 drafts, only for genuine missed follow-ups
-- open_loops_from_last_week: omit if last_weeks_summary is empty
-- Be specific — use real names and real topics
+- at_a_glance bullets: one sentence each, specific and factual
+- key_learnings: real insights only, skip if nothing concrete
+- missed_follow_ups: look for things promised or implied that weren't acted on
+- follow_up_drafts: max 3, only genuine missed follow-ups
+- people_spoke_to: keep context to one short sentence per person
+- open_loops_from_last_week: omit entirely if last_weeks_summary is empty
+- No motivational language, no superlatives
 """
 
     response = client.messages.create(
