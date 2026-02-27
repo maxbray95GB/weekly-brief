@@ -1,0 +1,59 @@
+name: Weekly Brief
+
+on:
+  # Runs every Friday at 8:30 AM London time (UTC+0 in winter, UTC+1 in summer)
+  # This is set to 8:30 UTC which = 8:30 GMT (winter) / 9:30 BST (summer)
+  # Adjust the hour if you're in a different timezone
+  schedule:
+    - cron: '30 8 * * 5'   # minute hour day month day-of-week (5 = Friday)
+  
+  # Also allows you to trigger it manually from GitHub's UI for testing
+  workflow_dispatch:
+
+jobs:
+  send-weekly-brief:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run weekly brief
+        env:
+          # Google API credentials (OAuth token JSON, stored as a GitHub Secret)
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+          
+          # Anthropic API key for Claude
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          
+          # Granola MCP server connection details
+          GRANOLA_MCP_URL: ${{ secrets.GRANOLA_MCP_URL }}
+          GRANOLA_MCP_TOKEN: ${{ secrets.GRANOLA_MCP_TOKEN }}
+          
+          # Your email address (where the brief gets sent)
+          RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
+          
+          # Your first name (used in the briefing tone)
+          USER_NAME: ${{ secrets.USER_NAME }}
+        
+        run: python main.py
+
+      # Saves the "last week summary" file back to the repo
+      # so next week's run can reference it for continuity
+      - name: Commit last week's summary for continuity
+        run: |
+          git config user.name "weekly-brief-bot"
+          git config user.email "bot@weekly-brief"
+          git add last_week_summary.json
+          git diff --staged --quiet || git commit -m "Update last_week_summary.json [skip ci]"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
