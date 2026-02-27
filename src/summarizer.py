@@ -8,7 +8,6 @@ import os
 
 import anthropic
 
-
 client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
 SYSTEM_PROMPT = """You are a personal chief of staff. Every Friday morning, you write a 
@@ -30,17 +29,17 @@ def generate_briefing(
     last_week_summary: str,
     user_name: str = "there",
 ) -> dict:
-    """
-    Sends all data to Claude and returns a structured briefing dict.
-    
-    Returns a dict with sections matching the email template.
-    """
 
-    # Limit data size to avoid truncating Claude's response
-    emails = emails[:50]  # Cap at 50 most recent emails
+    # Trim data to avoid overwhelming Claude
+    emails = emails[:30]
     for e in emails:
-        e["body"] = e.get("body", "")[:200]  # Shorter snippets
-        
+        e["body"] = e.get("body", "")[:150]
+        e.pop("snippet", None)
+
+    past_events = past_events[:20]
+    upcoming_events = upcoming_events[:10]
+    meeting_notes = meeting_notes[:10]
+
     data_payload = {
         "emails": emails,
         "past_calendar_events": past_events,
@@ -50,8 +49,8 @@ def generate_briefing(
         "last_weeks_summary": last_week_summary,
     }
 
-    user_prompt = f"""Here is {user_name}'s activity data for the past 7 days. 
-    
+    user_prompt = f"""Here is {user_name}'s activity data for the past 7 days.
+
 {json.dumps(data_payload, indent=2, default=str)}
 
 Based on this, generate a weekly briefing. Respond ONLY with JSON in this exact schema:
@@ -59,20 +58,16 @@ Based on this, generate a weekly briefing. Respond ONLY with JSON in this exact 
 {{
   "week_headline": "A single punchy sentence capturing the character of this week",
   "key_themes": ["theme 1", "theme 2", "theme 3"],
-  
   "people_spoke_to": [
     {{
       "name": "Full name or email",
       "context": "What you discussed / relationship",
-      "follow_up_needed": true/false
+      "follow_up_needed": true
     }}
   ],
-  
   "key_learnings": [
-    "Learning or insight 1 (written as a full sentence)",
-    "Learning or insight 2"
+    "Learning or insight 1 (written as a full sentence)"
   ],
-  
   "missed_follow_ups": [
     {{
       "person": "Name or email",
@@ -80,46 +75,39 @@ Based on this, generate a weekly briefing. Respond ONLY with JSON in this exact 
       "suggested_action": "Concrete next step"
     }}
   ],
-  
   "follow_up_drafts": [
     {{
       "to_email": "email@example.com",
       "to_name": "Person's name",
       "subject": "Email subject line",
-      "body": "Full email body text. Keep it natural, brief, and personal."
+      "body": "Full email body text."
     }}
   ],
-  
   "docs_created_or_edited": [
     {{
       "title": "Doc title",
       "url": "URL if available",
-      "significance": "Why this matters / what it was for"
+      "significance": "Why this matters"
     }}
   ],
-  
   "open_loops_from_last_week": [
-    "Was last week's item X addressed? Brief status update"
+    "Was last week's item X addressed?"
   ],
-  
   "week_ahead_preview": [
     {{
       "title": "Event title",
       "date": "Day and time",
-      "prep_note": "One-line note on what to prepare or think about beforehand"
+      "prep_note": "One-line note on what to prepare"
     }}
   ],
-  
-  "closing_thought": "A single thoughtful observation or question to carry into next week"
+  "closing_thought": "A single thoughtful observation to carry into next week"
 }}
 
 Rules:
-- Only include sections where there's real data — don't fabricate or pad
-- missed_follow_ups: look for things promised in emails/meetings that don't appear to have been acted on
-- follow_up_drafts: only for genuine missed follow-ups, keep to max 3 drafts
-- open_loops_from_last_week: if last_weeks_summary is empty, omit this section
-- Be specific — use real names, real topics. Vague summaries are useless.
-- key_themes should be 2–4 words each, like tags
+- Only include sections where there is real data
+- follow_up_drafts: max 3 drafts, only for genuine missed follow-ups
+- open_loops_from_last_week: omit if last_weeks_summary is empty
+- Be specific — use real names and real topics
 """
 
     response = client.messages.create(
@@ -131,7 +119,6 @@ Rules:
 
     raw = response.content[0].text.strip()
 
-    # Strip markdown code fences if Claude adds them
     if raw.startswith("```"):
         raw = raw.split("\n", 1)[1]
         raw = raw.rsplit("```", 1)[0]
