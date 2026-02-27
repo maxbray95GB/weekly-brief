@@ -36,6 +36,11 @@ def generate_briefing(
     Returns a dict with sections matching the email template.
     """
 
+    # Limit data size to avoid truncating Claude's response
+    emails = emails[:50]  # Cap at 50 most recent emails
+    for e in emails:
+        e["body"] = e.get("body", "")[:200]  # Shorter snippets
+        
     data_payload = {
         "emails": emails,
         "past_calendar_events": past_events,
@@ -119,7 +124,7 @@ Rules:
 
     response = client.messages.create(
         model="claude-opus-4-6",
-        max_tokens=8000,
+        max_tokens=16000,
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_prompt}],
     )
