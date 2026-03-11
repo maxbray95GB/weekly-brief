@@ -93,12 +93,3 @@ jobs:
           git push
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-```
-
-5. Click **Commit changes**
-
-**Step 2 — Then in Terminal, push the rest:**
-```
-cd ~/Downloads/weekly-brief-v4
-git pull origin main
-git push origin main
