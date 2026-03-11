@@ -3,28 +3,29 @@ email_digester.py — pre-processes all emails for the week in batches,
 extracting a structured digest that covers the full 7 days without
 hitting token limits.
 
-This runs BEFORE the main summarizer, giving Claude a complete picture
-of the week rather than just the most recent 30 emails.
+Rate-limit aware: waits 65s between batches to stay under 10k
+input tokens/min. Trims email bodies to 200 chars to reduce token usage.
 """
 
 import json
 import os
+import time
 import anthropic
 
 client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
-BATCH_SIZE = 40  # Emails per batch
+BATCH_SIZE = 25  # Smaller batches to stay under rate limit
+RATE_LIMIT_PAUSE = 65  # Seconds between batches (10k tokens/min limit)
+MAX_RETRIES = 2
 
 
 def _digest_batch(batch: list[dict], batch_num: int, total_batches: int) -> dict:
     """Sends one batch of emails to Claude and extracts structured insights."""
 
-    prompt = f"""You are processing batch {batch_num} of {total_batches} of someone's emails from the past 7 days.
-
-Extract ONLY what's genuinely notable. Skip pleasantries, newsletters, and noise.
+    prompt = f"""Process batch {batch_num}/{total_batches} of emails. Extract only what's genuinely notable. Skip pleasantries, newsletters, noise.
 
 Emails:
-{json.dumps(batch, indent=2, default=str)}
+{json.dumps(batch, default=str)}
 
 Respond with JSON only:
 {{
@@ -57,21 +58,30 @@ Respond with JSON only:
 Be conservative — only include what's genuinely worth flagging.
 """
 
-    response = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=2000,
-        messages=[{"role": "user", "content": prompt}],
-    )
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            response = client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=2000,
+                messages=[{"role": "user", "content": prompt}],
+            )
 
-    raw = response.content[0].text.strip()
-    if raw.startswith("```"):
-        raw = raw.split("\n", 1)[1]
-        raw = raw.rsplit("```", 1)[0]
+            raw = response.content[0].text.strip()
+            if raw.startswith("```"):
+                raw = raw.split("\n", 1)[1]
+                raw = raw.rsplit("```", 1)[0]
 
-    return json.loads(raw)
+            return json.loads(raw)
+        except anthropic.RateLimitError:
+            if attempt < MAX_RETRIES:
+                wait = RATE_LIMIT_PAUSE * (attempt + 1)
+                print(f"   ⏳ Rate limited — waiting {wait}s before retry...")
+                time.sleep(wait)
+            else:
+                raise
 
 
-def _merge_digests(digests: list[dict]) -> dict:
+def merge_digests(digests: list[dict]) -> dict:
     """Merges multiple batch digests into a single week digest."""
     merged = {
         "people_contacted": {},
@@ -122,14 +132,20 @@ def digest_emails(emails: list[dict]) -> dict:
             "topics_mentioned": [],
         }
 
-    print(f"   Digesting {len(emails)} emails in {((len(emails) - 1) // BATCH_SIZE) + 1} batches...")
+    num_batches = ((len(emails) - 1) // BATCH_SIZE) + 1
+    print(f"   Digesting {len(emails)} emails in {num_batches} batches (with {RATE_LIMIT_PAUSE}s pauses)...")
 
     # Split into batches
     batches = [emails[i:i + BATCH_SIZE] for i in range(0, len(emails), BATCH_SIZE)]
     digests = []
 
     for i, batch in enumerate(batches):
-        # Trim email bodies for the digest pass
+        # Wait between batches to respect rate limit (skip before first)
+        if i > 0:
+            print(f"   ⏳ Waiting {RATE_LIMIT_PAUSE}s for rate limit...")
+            time.sleep(RATE_LIMIT_PAUSE)
+
+        # Trim email bodies aggressively to reduce tokens
         trimmed = []
         for e in batch:
             trimmed.append({
@@ -137,7 +153,7 @@ def digest_emails(emails: list[dict]) -> dict:
                 "to": e.get("to", ""),
                 "subject": e.get("subject", ""),
                 "date": e.get("date", ""),
-                "body": e.get("body", "")[:300],
+                "body": e.get("body", "")[:200],
             })
 
         try:
@@ -147,5 +163,5 @@ def digest_emails(emails: list[dict]) -> dict:
         except Exception as ex:
             print(f"   ⚠️  Batch {i + 1} failed: {ex}")
 
-    return _merge_digests(digests)
+    return merge_digests(digests)
 
