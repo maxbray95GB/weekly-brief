@@ -1,21 +1,78 @@
 name: Weekly Brief
+
 on:
   schedule:
-    - cron: '30 8 * * 5'
+    # Cache emails every 2 days (Tue, Thu, Sat) at 7AM UTC
+    - cron: '0 7 * * 2,4,6'
+    # Send brief Monday 9AM UTC
+    - cron: '0 9 * * 1'
+    # Send brief Friday 12PM UTC
+    - cron: '0 12 * * 5'
   workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Run mode'
+        required: true
+        default: 'send'
+        type: choice
+        options:
+          - send
+          - cache
+
 jobs:
-  send-weekly-brief:
+  # ── Cache job: digest emails and store ────────────────────────────────
+  cache-emails:
+    if: >-
+      (github.event_name == 'schedule' && github.event.schedule == '0 7 * * 2,4,6') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'cache')
     runs-on: ubuntu-latest
     steps:
       - name: Check out the repository
         uses: actions/checkout@v4
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
       - name: Install dependencies
         run: pip install -r requirements.txt
-      - name: Run weekly brief
+
+      - name: Run email cache
+        env:
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python cache_emails.py
+
+      - name: Commit cache file
+        run: |
+          git config user.name "weekly-brief-bot"
+          git config user.email "bot@weekly-brief"
+          git add email_cache.json
+          git diff --staged --quiet || git commit -m "Update email cache [skip ci]"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ── Send job: generate and send the brief ─────────────────────────────
+  send-brief:
+    if: >-
+      (github.event_name == 'schedule' && (github.event.schedule == '0 9 * * 1' || github.event.schedule == '0 12 * * 5')) ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'send')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run brief
         env:
           GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -23,14 +80,25 @@ jobs:
           GRANOLA_CLIENT_ID: ${{ secrets.GRANOLA_CLIENT_ID }}
           RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
           USER_NAME: ${{ secrets.USER_NAME }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: python main.py
-      - name: Save continuity summary
+
+      - name: Save state files
         run: |
           git config user.name "weekly-brief-bot"
           git config user.email "bot@weekly-brief"
-          git add last_week_summary.json
-          git diff --staged --quiet || git commit -m "Update summary [skip ci]"
+          git add last_week_summary.json memory.json email_cache.json
+          git diff --staged --quiet || git commit -m "Update state after brief [skip ci]"
           git push
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
 
+5. Click **Commit changes**
+
+**Step 2 — Then in Terminal, push the rest:**
+```
+cd ~/Downloads/weekly-brief-v4
+git pull origin main
+git push origin main
